@@ -37,8 +37,6 @@ function QuarterlyData(initvec, lastvec, ns)
     nobs = 4*(lastvec[1]-initvec[1]-1)+lastvec[2]+(4-initvec[2]+1)
     return QuarterlyData(nobs, ns)
 end
-function Quarterlydata(initvec, lastvec, ns)
-end
 """
 deflate series by PCE
 """
@@ -103,7 +101,7 @@ function monthly_to_quarterly(data_q::AbstractArray, date_q::AbstractVector{Date
     date_q_quarter = transform_date.(date_q)
     return data_q, date_q_quarter
 end
-transform_date(date::Dates.Date) = [Dates.year(date) get_quarter(date)]
+transform_date(date::Dates.Date) = (Dates.year(date), get_quarter(date))
 get_quarter(date::Dates.Date) = cld(Dates.month(date), 3)
 
 # Level
@@ -382,4 +380,4 @@ function readin_data(md::MonthlyData, qd::QuarterlyData,
 end
 
 calender_value(year::Integer, quarter::Integer) = year+(quarter-1)/4
-calender_value(calvec::Array{Int, 2}) = calender_value(calvec[1, 1], calvec[1, 2])
+calender_value(calvec::Tuple{Int, Int}) = calender_value(calvec[1], calvec[2])
