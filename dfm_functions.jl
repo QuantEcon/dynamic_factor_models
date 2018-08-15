@@ -68,7 +68,6 @@ function DFMModel(data, inclcode,
     nt_min_factor_estimation::Integer, nt_min_factorloading_estimation::Integer,
     initperiod::Integer, lastperiod::Integer,
     nfac_o::Integer, nfac_u::Integer, tol, n_uarlag::Integer, n_factorlag::Integer)
-
     size(data, 2) == length(inclcode) || error("length of inclcode must equal to number of data series")
     initperiod < lastperiod || error("initperiod must be smaller than lastperiod")
     ((n_uarlag > 0) && (n_factorlag > 0)) || error("n_uarlag and n_factorlag must be positive")
