@@ -34,16 +34,17 @@ struct VARModel{TA <: AbstractArray, TAm <: AbstractArray, TMm <: AbstractMatrix
 end
 mutable struct FactorEstimateStats
     T::Int # number of data periods used for factor estimation
-    ns::Int
+    ns::Int # number of data series
     nobs # total number of observations (=sum_i T_i)
     tss
     ssr
     R2::Vector{Union{Missing, Float64}}
 end
 struct DFMModel
-    data
+    data::AbstractArray
     inclcode::Vector{Int}
-    T::Int  # number of data periods
+    T::Int  # number of whole data periods
+    ns::Int
     nt_min_factor_estimation::Int
     nt_min_factorloading_estimation::Int
     initperiod::Int
@@ -53,9 +54,9 @@ struct DFMModel
     nfac_t::Int
     tol::Float64
     fes::FactorEstimateStats
-    factor
-    lambda
-    uar_coef
+    factor::AbstractArray
+    lambda::AbstractArray
+    uar_coef::AbstractArray
     uar_ser::Vector{Float64}
     n_uarlag::Int
     n_factorlag::Int
@@ -74,17 +75,24 @@ function DFMModel(data, inclcode,
 
     T, ns = size(data)
     nfac_t = nfac_o+nfac_u
-    fes = FactorEstimateStats(lastperiod - initperiod + 1,
+    # if ns == 207
+    #     fes = FactorEstimateStats(lastperiod - initperiod + 1,
+    #                           length(inclcode.==1),
+    #                           missing, missing, missing,
+    #                           Vector{Union{Missing, Float64}}(undef, length(inclcode)))
+    # else
+        fes = FactorEstimateStats(lastperiod - initperiod + 1,
                               count(inclcode.==1),
                               missing, missing, missing,
                               Vector{Union{Missing, Float64}}(undef, count(inclcode.==1)))
+    # end
     factor = Matrix{Union{Missing, Float64}}(missing, T, nfac_t)
     lambda = Matrix{Float64}(undef, ns, nfac_t)
     uar_coef = Matrix{Float64}(undef, ns, n_uarlag)
     uar_ser = Vector{Float64}(undef, ns)
     factor_var_model = VARModel(factor, n_factorlag, initperiod= initperiod,
                                 lastperiod=lastperiod)
-    return DFMModel(data, vec(inclcode), T,
+    return DFMModel(data, vec(inclcode), T, ns,
                     nt_min_factor_estimation, nt_min_factorloading_estimation,
                     initperiod, lastperiod, nfac_o, nfac_u, nfac_t,
                     tol, fes, factor, lambda, uar_coef, uar_ser,
@@ -187,7 +195,8 @@ end
 """
 estimate factor by iteration using balanced data
 """
-function estimate_factor!(m::DFMModel)
+function estimate_factor!(m::DFMModel, max_iter::Integer=100000000,
+                         computeR2::Bool=true)
     data = m.data
     initperiod, lastperiod, nt_min, nfac_u, nfac_o, tol =
         m.initperiod, m.lastperiod, m.nt_min_factor_estimation,
@@ -204,30 +213,37 @@ function estimate_factor!(m::DFMModel)
 
     xbal, _ = drop_missing_col(xdata_standardized)
 
-    # nt, ns = size(xdata_standardized)
     # Get initial F_t given Lambda_t using PCA
     f = pca_score(xbal, nfac_u)
     m.fes.ssr = 0
     diff = 1000
-    while diff > tol*m.fes.T*m.fes.ns
+    lambda = Array{Union{Missing, Float64}}(undef, m.fes.ns, m.nfac_t)
+    for iter = 1:max_iter
         ssr_old = m.fes.ssr
         # given F_t, get Lambda_t
-        if size(xdata_standardized, 1) >= nt_min # if sample size is enough
-            lambda = ols_skipmissing(xdata_standardized, f, Unbalanced())[1]'
+        for i = 1:m.fes.ns
+            tmp, usedrows = drop_missing_row([xdata_standardized[:, i] f])
+            if count(usedrows) >= nt_min
+                lambda[i, :] =
+                    ols_skipmissing(xdata_standardized[:, i], f, Balanced())[1]'
+            end
         end
         # given Lambda_t, get F_t by regressing X_t on Lambda_t for each t
         tmp = ols_skipmissing(xdata_standardized', lambda[:, nfac_o+1:end], Unbalanced())
         f, ehat = tmp[1]', tmp[2]
         m.fes.ssr = sum(sum(skipmissing(ehat.^2)))
         diff = abs(ssr_old - m.fes.ssr)
+        diff >= tol*m.fes.T*m.fes.ns || break
         # println("diff = ", diff)
     end
     m.factor[initperiod:lastperiod,  :] = f
-    for i=1:m.fes.ns
-        tmp = drop_missing_row([xdata_standardized[:, i] f])[1]
-        if size(tmp, 1) >= nt_min
-            _, ehat = ols(tmp[:, 1], tmp[:, 2:end])
-            m.fes.R2[i] = compute_r2(tmp[:, 1], ehat)[1]
+    if computeR2
+        for i=1:m.fes.ns
+            tmp = drop_missing_row([xdata_standardized[:, i] f])[1]
+            if size(tmp, 1) >= nt_min
+                _, ehat = ols(tmp[:, 1], tmp[:, 2:end])
+                m.fes.R2[i] = compute_r2(tmp[:, 1], ehat)[1]
+            end
         end
     end
     return nothing
@@ -312,11 +328,11 @@ function fill_matrices!(varm::VARModel, betahat::Array)
 end
 
 function standardize_data(data::AbstractArray)
-    datamean = [mean(skipmissing(data[:, i])) for i = 1:size(data, 2)]'
+    datamean = [mean(collect(skipmissing(data[:, i]))) for i = 1:size(data, 2)]'
     # # make correction (which I don't understand why being needed)
     tmp = size(data, 1) .- sum(ismissing.(data), dims = 1)
     tmp = (tmp.-1)./tmp
-    datastd = [std(skipmissing(data[:, i])) for i = 1:size(data, 2)]'.*sqrt.(tmp)
+    datastd = [std(collect(skipmissing(data[:, i]))) for i = 1:size(data, 2)]'.*(tmp.^.5)
     data_standardized = (data .- datamean)./datastd
     return data_standardized, datastd
 end
@@ -374,7 +390,7 @@ function gain(h::AbstractVector, w::Real)
     return fgain
 end
 
-function bai_ng_criterion!(m::DFMModel)
+function bai_ng_criterion(m::DFMModel)
     fes = m.fes
     nbar = fes.nobs/fes.T # average observation per period
     g = log(min(nbar, fes.T))*(nbar+fes.T)/fes.nobs
@@ -385,9 +401,12 @@ end
 - `nfac_max::Integer`: maximum number of factors
 """
 struct FactorNumberEstimateStats
-    bn_icp::Vector{Float64}
-    ssr::Vector{Float64}
-    R2::Matrix{Float64}
+    bn_icp
+    ssr_static
+    R2_static
+    aw_icp
+    ssr_dynamic
+    R2_dynamic
     tss::Float64
     nobs::Int
     T::Int
@@ -396,24 +415,67 @@ end
 - `m::DFMModel`: `DFMModel` specifying the model except number of unobservable
                  factors.
 """
-function estimate_factor_numbers(m::DFMModel, nfacs::AbstractVector)
-    bn_icp = Vector{Float64}(undef, length(nfacs))
-    ssr = Vector{Float64}(undef, length(nfacs))
-    R2 = Matrix{Float64}(undef, m.fes.ns, length(nfacs))
+function estimate_factor_numbers(m::DFMModel, nfacs::Union{Real, AbstractVector})
+    max_nfac = maximum(nfacs)
+    bn_icp = Vector{Union{Missing, Float64}}(undef, max_nfac)
+    ssr_static = Vector{Float64}(undef, max_nfac)
+    R2_static = Matrix{Union{Missing, Float64}}(undef, m.fes.ns, max_nfac)
+    aw_icp = Matrix{Union{Missing, Float64}}(undef, max_nfac, max_nfac)
+    ssr_dynamic = Matrix{Union{Missing, Float64}}(undef, max_nfac, max_nfac)
+    R2_dynamic = Array{Union{Missing, Float64}}(undef, m.fes.ns, max_nfac, max_nfac)
 
-    dfmms = [DFMModel(data, inclcode,
-             nt_min_factor_estimation, nt_min_factorloading_estimation,
-             initperiod, lastperiod, nfac_o, nfac_u, tol, n_uarlag, n_factorlag)
-             for nfac_u in nfacs]
-    for (i, nfac) = enumerate(nfacs)
-        estimate_factor!(dfmms[i])
-        bn_icp[i] = bai_ng_criterion!(dfmms[i])
-        ssr[i] = dfmms[i].fes.ssr
-        R2[:, i] = dfmms[i].fes.R2
+    global tss, nobs, T
+    for (i, nfac) = enumerate(1:max_nfac)
+        dfmm = DFMModel(m.data, m.inclcode,
+                m.nt_min_factor_estimation, m.nt_min_factorloading_estimation,
+                m.initperiod, m.lastperiod, m.nfac_o, nfac, m.tol, m.n_uarlag, m.n_factorlag)
+        estimate_factor!(dfmm)
+        bn_icp[i] = bai_ng_criterion(dfmm)
+        ssr_static[i] = dfmm.fes.ssr
+        R2_static[:, i] = dfmm.fes.R2
+        aw_icp[1:nfac, i], ssr_dynamic[1:nfac, i], R2_dynamic[:, 1:nfac, i] =
+            amengual_watson_test(dfmm, 4)
+        global tss = dfmm.fes.tss
+        global nobs = dfmm.fes.nobs
+        global T = dfmm.fes.T
     end
-    return FactorNumberEstimateStats(bn_icp, ssr, R2, dfmms[1].fes.tss,
-                                     dfmms[1].fes.nobs, dfmms[1].fes.T)
+    return FactorNumberEstimateStats(bn_icp, ssr_static, R2_static,
+                                     aw_icp, ssr_dynamic, R2_dynamic,
+                                     tss, nobs, T)
 end
 
-function amengual_watson_test(m::DFMModel)
+function amengual_watson_test(m::DFMModel, nper::Integer)
+    factor = m.factor
+    T, ns, nfac_static = m.T, m.fes.ns, m.nfac_t
+    nvar_lag = m.factor_var_model.nlag
+    est_data = m.data[:, m.inclcode.==1]
+
+    # Construct lags of factors and residuals for est_data
+    x = [ones(T) lagmat(factor, 1:nvar_lag)]
+    est_data_res = Array{Union{Missing, Float64}}(undef, T, ns)
+    for is = 1:ns
+        tmp, usedrows = drop_missing_row([est_data[:, is] x])
+        y = tmp[:, 1]
+        z = tmp[:, 2:end]
+        ndf = size(z, 1)-size(z, 2)
+        if ndf >= m.nt_min_factor_estimation  # Minimum degrees of freedom for series
+            b, e = ols(y, z)
+            est_data_res[findall(vec(usedrows)), is] = e
+        end
+    end
+
+    # Carry out calculations for number of dynamic factors
+    ssr = Array{Float64}(undef, nfac_static)
+    r2  = Array{Union{Missing, Float64}}(undef, ns, nfac_static)
+    aw  = Array{Float64}(undef, nfac_static)
+    for nfac = 1:nfac_static
+        dfmm = DFMModel(est_data_res, ones(count(m.inclcode.==1)),
+                m.nt_min_factor_estimation, m.nt_min_factorloading_estimation,
+                m.initperiod+4, m.lastperiod, 0, nfac, m.tol, m.n_uarlag, m.n_factorlag)
+        estimate_factor!(dfmm)
+        aw[nfac] = bai_ng_criterion(dfmm)
+        ssr[nfac] = dfmm.fes.ssr
+        r2[:, nfac] = dfmm.fes.R2
+    end
+    return aw, ssr, r2
 end

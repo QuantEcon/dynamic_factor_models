@@ -22,9 +22,6 @@ end
 struct Mean <: DetrendMethod end
 struct NoDetrend <: DetrendMethod end
 
-abstract type DataType end
-struct RealData <: DataType end
-struct AllData <: DataType end
 get_sample_periods(initvec::Array, lastvec::Array, ::MonthlyData) =
     12*(lastvec[1]-initvec[1]-1)+lastvec[2]+(12-initvec[2]+1)
 get_sample_periods(initvec::Array, lastvec::Array, ::QuarterlyData) =
@@ -200,10 +197,10 @@ function adjust_x!(x, i_outlier, zm, thr, iqr, ::Val{4})
     return nothing
 end
 
-readin_data(frequency::MonthlyData) =
-    readin_monthly_data(true, 4, 2, 6, [1, 2, 3, 5], frequency)
-readin_data(frequency::QuarterlyData) =
-    readin_monthly_data(true, 4, 2, 5, [1, 2, 3, 5], frequency)
+readin_data(frequency::MonthlyData, datatype) =
+    readin_monthly_data(true, 4, 2, 6, [1, 2, 3, 5], frequency, datatype)
+readin_data(frequency::QuarterlyData, datatype) =
+    readin_monthly_data(true, 4, 2, 5, [1, 2, 3, 5], frequency, datatype)
 readdata(::MonthlyData) = readxlsheet("data/hom_fac_1.xlsx", "Monthly")
 readdata(::QuarterlyData) = readxlsheet("data/hom_fac_1.xlsx", "Quarterly")
 function readin_monthly_data(correct_outlier::Bool,
@@ -212,6 +209,7 @@ function readin_monthly_data(correct_outlier::Bool,
                              ncodes::Integer,    # number of rows of "codes" in Excel file
                              cat_include::AbstractVector,
                              frequency::DataFrequency,
+                             datatype::Symbol
                              )
     dnobs = frequency.nobs
     ns_m = frequency.ns
@@ -235,6 +233,7 @@ function readin_monthly_data(correct_outlier::Bool,
     standardize_killian!(datamat_m, namevec, frequency)
 
     usedcols_id = (includecode .!=0) .& [in(cat, cat_include) for cat in floor.(catcode)]
+    usedcols_id = get_usedcols_id(includecode, catcode, cat_include, Val(datatype))
     data_m = datamat_m[:, usedcols_id]
     bpdefcode = defcode[usedcols_id]
     bpoutlier = outliercode[usedcols_id]
@@ -252,6 +251,9 @@ function readin_monthly_data(correct_outlier::Bool,
     return data_q, bpdata_raw, bpdata_noa, date_q, catcode[usedcols_id],
            includecode[usedcols_id], namevec[usedcols_id]
 end
+get_usedcols_id(includecode, catcode, cat_include, ::Val{:Real}) =
+     (includecode .!=0) .& [in(cat, cat_include) for cat in floor.(catcode)]
+get_usedcols_id(includecode, catcode, cat_include, ::Val{:All}) = includecode .!=0
 
 function get_headers(maindata, ::MonthlyData)
     namevec = uppercase.(convert(Vector{String}, maindata[1, :]))
@@ -348,15 +350,15 @@ end
 """
 ##### Arguments
 - `detrend_method::DetrendMethod`: method for detrending.
-- `::RealData`: type of read data. (TODO: `::AllData`)
+- `datatype::Symbol`: type of read data, `:Real` or `:All`
 """
 function readin_data(md::MonthlyData, qd::QuarterlyData,
-                     detrend_method::DetrendMethod, ::RealData)
+                     detrend_method::DetrendMethod, datatype::Symbol)
     data_m, bpdata_raw_m, bpdata_noa_m, date_m, bpcatcode_m, inclcode_m, namevec_m =
-        readin_data(md)
+        readin_data(md, datatype)
 
     data_q, bpdata_raw_q, bpdata_noa_q, date_q, bpcatcode_q, inclcode_q, namevec_q =
-        readin_data(qd)
+        readin_data(qd, datatype)
 
     all(date_m .== date_q) ||
         @error "inconsistent sample size for monthly and quarterly data"
