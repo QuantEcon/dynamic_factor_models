@@ -6,3 +6,5 @@ This is a respository for the project to replicate some results of dynamic facto
 - [Forni, M., & Gambetti, L. (2010). The dynamic effects of monetary policy: A structural factor model approach. Journal of Monetary Economics, 57(2), 203-216.](https://www.sciencedirect.com/science/article/pii/S0304393209001597)
 
 **Any contribution would be appreciated!!**
+- post issue if you find any error or if you want a new feature
+- send pull request if you can contribute to the repository
