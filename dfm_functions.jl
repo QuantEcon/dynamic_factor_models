@@ -75,17 +75,10 @@ function DFMModel(data, inclcode,
 
     T, ns = size(data)
     nfac_t = nfac_o+nfac_u
-    # if ns == 207
-    #     fes = FactorEstimateStats(lastperiod - initperiod + 1,
-    #                           length(inclcode.==1),
-    #                           missing, missing, missing,
-    #                           Vector{Union{Missing, Float64}}(undef, length(inclcode)))
-    # else
-        fes = FactorEstimateStats(lastperiod - initperiod + 1,
+    fes = FactorEstimateStats(lastperiod - initperiod + 1,
                               count(inclcode.==1),
                               missing, missing, missing,
                               Vector{Union{Missing, Float64}}(undef, count(inclcode.==1)))
-    # end
     factor = Matrix{Union{Missing, Float64}}(missing, T, nfac_t)
     lambda = Matrix{Float64}(undef, ns, nfac_t)
     uar_coef = Matrix{Float64}(undef, ns, n_uarlag)
@@ -479,3 +472,46 @@ function amengual_watson_test(m::DFMModel, nper::Integer)
     end
     return aw, ssr, r2
 end
+
+"""
+compute impulse response function of `VARModel` with one standard error shock
+```math
+y_t = Qz_t
+```
+```
+z_t = Mz_{t-1}+Gu_t
+```
+##### Arguments
+- `varm::VARModel`
+- `shock_ids`: `<:AbstractVector` or `<:Real` or `:all`.
+- `T::Integer`:  horizon of IRF
+##### Return
+- `irfs::Array` IRFs. It is 2D if `shock_ids<:Real` and 3D otherwise.
+                First dimension is each series, second dimension is time,
+                third dimension is type of shock (if exist).
+"""
+function impulse_response(varm::VARModel, shock_ids::AbstractVector, T::Integer)
+    irfs = Array{Float64, 3}(undef, size(varm.Q, 1), T, length(shock_ids))
+    for (i, shock_id) in enumerate(shock_ids)
+        compute_irf_single_shock!(irfs, varm, i, shock_id, T)
+    end
+    return irfs
+end
+function compute_irf_single_shock!(irfs::AbstractArray, varm::VARModel,
+                       i::Integer, shock_id::Integer, T::Integer)
+    x = varm.G[:, shock_id]
+    for t = 1:T
+        irfs[:, t, i] = varm.Q * x
+        x .= varm.M * x
+    end
+    return nothing
+end
+function impulse_response(varm::VARModel, shock_id::Real, T::Integer)
+    irfs = Matrix{Float64}(undef, size(varm.Q, 1), T)
+    compute_irf_single_shock!(irfs, varm, x, 1, shock_id, T)
+    return irfs
+end
+impulse_response(varm::VARModel, shock_id::Symbol, T::Integer) =
+    impulse_response(varm, Val(shock_id), T)
+impulse_response(varm::VARModel, shock_ids::Val{:all}, T::Integer) =
+    impulse_response(varm, 1:size(varm.G, 2), T)
