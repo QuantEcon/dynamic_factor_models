@@ -63,7 +63,7 @@ struct DFMModel
     factor_var_model::VARModel
 end
 """
-Note: `factor` and `facor_var_model.y` are actually using same memory.
+Note: `factor` and `factor_var_model.y` are actually using same memory.
 """
 function DFMModel(data, inclcode,
     nt_min_factor_estimation::Integer, nt_min_factorloading_estimation::Integer,
